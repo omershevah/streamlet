@@ -4,7 +4,7 @@ Paste (or tap, or share) a magnet link for an episode, a season or a whole serie
 
 ## Build
 
-1. Open the folder in Android Studio (Narwhal or newer) and let Gradle sync.
+1. Open the folder in a current Android Studio (it needs Android Gradle Plugin 9.5 support) and let Gradle sync.
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
 3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
 

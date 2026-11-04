@@ -2,21 +2,20 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "dev.omershevach.streamlet"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.omershevach.streamlet"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         // CI passes these from the git tag and run number; local builds use the defaults.
         versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.1"
     }
 
     // Release key from environment variables (set by CI from repository secrets).
