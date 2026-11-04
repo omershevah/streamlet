@@ -1,0 +1,82 @@
+name: Build
+
+# Every push and pull request builds the APKs (download them from the run's artifacts).
+# Pushing a tag like v1.0 also publishes them on the Releases page.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Optional: add these repository secrets to sign with your own key (see README).
+      KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up signing key
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "SIGNING_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build release APKs
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
+
+          mkdir dist
+          for apk in app/build/outputs/apk/release/*.apk; do
+            abi=$(basename "$apk" .apk | sed -E 's/^app-(.*)-release(-unsigned)?$/\1/')
+            cp "$apk" "dist/streamlet-$VERSION-$abi.apk"
+          done
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamlet-${{ env.VERSION }}
+          path: dist/*.apk
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          **Which APK?** Most phones: `arm64-v8a`. Older 32-bit phones: `armeabi-v7a`. Emulators and Chromebooks: `x86_64`.
+
+          Needs [VLC for Android](https://play.google.com/store/apps/details?id=org.videolan.vlc) installed.
+          EOF
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.apk \
+              --title "Streamlet $VERSION" --notes-file notes.md --generate-notes
+          fi

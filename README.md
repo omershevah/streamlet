@@ -6,7 +6,26 @@ Paste (or tap, or share) a magnet link for an episode, a season or a whole serie
 
 1. Open the folder in Android Studio (Narwhal or newer) and let Gradle sync.
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
-3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs. They're signed with the debug key so you can sideload them; use your own key before distributing.
+3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
+
+## Releases
+
+GitHub Actions builds the APKs on every push. To publish a release, push a tag:
+
+```sh
+git tag v1.1 && git push origin v1.1
+```
+
+The APKs (one per CPU type) appear on the Releases page, with the version taken from the tag.
+
+**Signing.** Without a key, CI signs with a throwaway debug key that changes every run, so each new release has to be installed over an uninstall. To sign every release with the same key, create one once:
+
+```sh
+keytool -genkeypair -v -keystore release.jks -alias streamlet -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 release.jks   # on macOS: base64 -i release.jks
+```
+
+and add these repository secrets (Settings → Secrets and variables → Actions): `SIGNING_KEYSTORE_BASE64` (the base64 output), `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` (`streamlet`), `SIGNING_KEY_PASSWORD`. Keep `release.jks` safe and out of git.
 
 ## How it works
 
