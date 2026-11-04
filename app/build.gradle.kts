@@ -86,5 +86,5 @@ dependencies {
     implementation(libs.libtorrent4j)
     implementation(libs.libtorrent4j.arm64)
     implementation(libs.libtorrent4j.arm)
-    implementation(libs.libtorrent4j.x86.x64)
+    implementation(libs.libtorrent4j.x64)
 }
