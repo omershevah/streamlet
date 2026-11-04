@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only shows for a moment before Compose draws; Compose owns all the real styling. -->
+    <style name="Theme.Streamlet" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
