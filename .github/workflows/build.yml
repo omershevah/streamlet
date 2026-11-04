@@ -1,13 +1,18 @@
 name: Build
 
 # Every push and pull request builds the APKs (download them from the run's artifacts).
-# Pushing a tag like v1.0 also publishes them on the Releases page.
+# To publish them on the Releases page, either push a tag like v1.0, or open
+# Actions → Build → Run workflow and enter a version.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, like 1.1 (leave empty to only build)
+        required: false
 
 permissions:
   contents: write
@@ -43,9 +48,15 @@ jobs:
           echo "SIGNING_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
       - name: Build release APKs
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="${INPUT_VERSION#v}"
+            echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           else
             VERSION="dev-${GITHUB_SHA::7}"
           fi
@@ -65,7 +76,7 @@ jobs:
           path: dist/*.apk
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -74,9 +85,9 @@ jobs:
 
           Needs [VLC for Android](https://play.google.com/store/apps/details?id=org.videolan.vlc) installed.
           EOF
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.apk --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.apk \
+            gh release create "$RELEASE_TAG" dist/*.apk --target "$GITHUB_SHA" \
               --title "Streamlet $VERSION" --notes-file notes.md --generate-notes
           fi

@@ -10,7 +10,7 @@ Paste (or tap, or share) a magnet link for an episode, a season or a whole serie
 
 ## Releases
 
-GitHub Actions builds the APKs on every push. To publish a release, push a tag:
+GitHub Actions builds the APKs on every push. To publish a release, open **Actions → Build → Run workflow** and enter a version (like `1.1`), or push a tag:
 
 ```sh
 git tag v1.1 && git push origin v1.1
