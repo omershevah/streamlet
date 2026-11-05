@@ -1,0 +1,44 @@
+name: Stream test
+on:
+  push:
+    branches: ['debug/**']
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq vlc-bin vlc-plugin-base > /dev/null
+          M=https://repo1.maven.org/maven2
+          mkdir lib && cd lib
+          curl -sSfLO $M/org/libtorrent4j/libtorrent4j/2.1.0-39/libtorrent4j-2.1.0-39.jar
+          curl -sSfLO $M/org/libtorrent4j/libtorrent4j-linux/2.1.0-39/libtorrent4j-linux-2.1.0-39.jar
+          curl -sSfLO $M/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar
+          unzip -q -o libtorrent4j-linux-2.1.0-39.jar -d native && find native -name "*.so"
+          curl -sSfL -o kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.2.0/kotlin-compiler-2.2.0.zip && unzip -q kc.zip
+      - name: Build harness
+        run: |
+          mkdir -p out stubs
+          javac -d stubs tools/streamtest/stubs/android/content/Context.java tools/streamtest/stubs/android/net/Uri.java
+          lib/kotlinc/bin/kotlinc -cp lib/libtorrent4j-2.1.0-39.jar:lib/kotlinx-coroutines-core-jvm-1.10.2.jar:stubs \
+            -d out app/src/main/java/dev/omershevach/streamlet/engine/*.kt tools/streamtest/Harness.kt
+      - name: Two tasks, VLC, remove
+        timeout-minutes: 8
+        run: |
+          find lib/native -name "*.so"
+          SO=$(find lib/native -path "*x86_64*" -name "*.so" | head -1)
+          [ -n "$SO" ] || SO=$(find lib/native -name "*.so" | head -1)
+          echo "native: $SO"; ldd "$SO" | grep -i "not found" || echo "ldd ok"
+          java -Dlibtorrent4j.jni.path=$PWD/$SO \
+            -cp out:stubs:lib/libtorrent4j-2.1.0-39.jar:lib/kotlinx-coroutines-core-jvm-1.10.2.jar:lib/kotlinc/lib/kotlin-stdlib.jar \
+            HarnessKt \
+            "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F" \
+            "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F"
+      - name: VLC log
+        if: always()
+        run: |
+          test -f vlc.log || { echo "no vlc log"; exit 0; }
+          grep -iE "error|warn|http|access|demux|eof|seek|range|buffering|decoder|stream|main input" vlc.log | grep -v "^\s*$" | head -150
