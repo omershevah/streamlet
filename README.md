@@ -8,6 +8,10 @@ Search, or paste (or tap, or share) a magnet link for an episode, a season or a 
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
 3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
 
+## Saving
+
+Once an episode is fully downloaded (100%), **Save to device** on the playing screen copies it to `Movies/Streamlet`, where the gallery and other players can see it. The copy carries on in the background (shown in the notification) even if you leave the torrent, and a notification opens the saved video when it's done. Android 8 and 9 ask for storage permission the first time; newer versions don't need any.
+
 ## Search and sources
 
 The search field takes either a magnet link (opened straight away) or search words. Searches go to every source that's switched on in **Sources** (the icon at the top right), and results are grouped by source.
@@ -60,6 +64,7 @@ magnet link
 | `engine/StreamServer.kt`, `ByteRange.kt` | Minimal HTTP/1.1 server with Range requests |
 | `engine/Episodes.kt`, `Magnet.kt` | Filename parsing, magnet normalization (adds a few public trackers) |
 | `search/Search.kt`, `Source.kt` | Internet Archive, Torznab and JSON search; saved sources; `.torrent` downloads |
+| `Saver.kt` | Copies a finished download to Movies/Streamlet (MediaStore) |
 | `MainViewModel.kt` | Screen state: Home (search) → Resolving → Picker → Playing, plus Sources |
 | `ui/` | Compose / Material 3 screens: search, sources, episode picker, playing |
 

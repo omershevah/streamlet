@@ -115,6 +115,8 @@ data class StreamStats(
     val ready: Boolean,
     /** Share of the whole file that's on disk, 0..1. */
     val downloaded: Float,
+    /** Every byte of the file is downloaded and verified, so it can be saved. */
+    val complete: Boolean,
     val bufferedAhead: Long,
     val bytesPerSecond: Int,
     val peers: Int,

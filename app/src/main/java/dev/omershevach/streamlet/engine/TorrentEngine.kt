@@ -149,6 +149,7 @@ object TorrentEngine {
                 startup = have / s.startupPieces.size.toFloat(),
                 ready = have == s.startupPieces.size,
                 downloaded = if (s.size > 0) done / s.size.toFloat() else 0f,
+                complete = done >= s.size,
                 bufferedAhead = (p - s.head).toLong() * s.pieceLength,
                 bytesPerSecond = status.downloadPayloadRate(),
                 peers = status.numPeers(),

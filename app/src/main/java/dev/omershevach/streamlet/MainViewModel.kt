@@ -33,7 +33,14 @@ sealed interface Screen {
     data object Sources : Screen
     data class Resolving(val name: String?) : Screen
     data class Picker(val title: String, val seasons: List<Season>) : Screen
-    data class Playing(val title: String, val episode: Episode, val url: String, val next: Episode?) : Screen
+    data class Playing(
+        val title: String,
+        val episode: Episode,
+        val url: String,
+        val next: Episode?,
+        /** The file on disk, to match it with [Saver.state]. */
+        val file: String,
+    ) : Screen
 }
 
 /** The results of one source for the current query. */
@@ -187,8 +194,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val all = episodes
         val next = all.getOrNull(all.indexOf(episode) + 1)
         StreamService.start(getApplication(), episode.headline)
-        _screen.value = Screen.Playing(title, episode, TorrentEngine.url(stream), next)
+        _screen.value = Screen.Playing(title, episode, TorrentEngine.url(stream), next, stream.file.absolutePath)
         watchStats()
+    }
+
+    /** Copies the episode that's playing to Movies/Streamlet. Only offered once it's fully downloaded. */
+    fun save() {
+        val s = TorrentEngine.stream ?: return
+        Saver.start(getApplication(), s.file, s.name)
     }
 
     /** Back navigation: playing → picker → home, and sources → home. */

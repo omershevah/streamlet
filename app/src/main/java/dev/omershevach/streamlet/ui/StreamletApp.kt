@@ -85,6 +85,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omershevach.streamlet.MainViewModel
 import dev.omershevach.streamlet.R
+import dev.omershevach.streamlet.SaveState
+import dev.omershevach.streamlet.Saver
 import dev.omershevach.streamlet.Screen
 import dev.omershevach.streamlet.Vlc
 import dev.omershevach.streamlet.engine.Episode
@@ -125,6 +127,12 @@ fun StreamletApp(vm: MainViewModel) {
         urls.any(Source::isLocal) &&
         ContextCompat.checkSelfPermission(context, LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
 
+    // Android 8 and 9 only: saving to Movies needs the storage permission.
+    val save by Saver.state.collectAsStateWithLifecycle()
+    val storage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) vm.save()
+    }
+
     BackHandler(enabled = screen !is Screen.Home) { vm.back() }
 
     AnimatedContent(
@@ -163,7 +171,21 @@ fun StreamletApp(vm: MainViewModel) {
             )
             is Screen.Resolving -> ResolvingScreen(s.name, onCancel = vm::back)
             is Screen.Picker -> PickerScreen(s.title, s.seasons, onBack = vm::back, onPick = vm::play)
-            is Screen.Playing -> PlayingScreen(s, stats, onBack = vm::back, onNext = vm::play)
+            is Screen.Playing -> PlayingScreen(
+                s, stats, save,
+                onBack = vm::back,
+                onNext = vm::play,
+                onSave = {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        vm.save()
+                    }
+                },
+            )
         }
     }
 }
@@ -263,7 +285,14 @@ private fun EpisodeRow(ep: Episode, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PlayingScreen(s: Screen.Playing, stats: StreamStats?, onBack: () -> Unit, onNext: (Episode) -> Unit) {
+private fun PlayingScreen(
+    s: Screen.Playing,
+    stats: StreamStats?,
+    save: SaveState,
+    onBack: () -> Unit,
+    onNext: (Episode) -> Unit,
+    onSave: () -> Unit,
+) {
     val context = LocalContext.current
     var vlcInstalled by remember { mutableStateOf(Vlc.isInstalled(context)) }
     LifecycleResumeEffect(Unit) {
@@ -337,6 +366,7 @@ private fun PlayingScreen(s: Screen.Playing, stats: StreamStats?, onBack: () -> 
                     )
                 }
             }
+            SaveButton(save.takeIf { it.key == s.file }, complete = stats?.complete == true, otherBusy = save is SaveState.Saving && save.key != s.file, onSave)
             OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(painterResource(R.drawable.ic_stop), contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -344,7 +374,7 @@ private fun PlayingScreen(s: Screen.Playing, stats: StreamStats?, onBack: () -> 
             }
             Spacer(Modifier.weight(1f))
             Text(
-                "Only this episode is downloaded, in playback order. Downloads are cleared when you leave this torrent.",
+                "Only this episode is downloaded, in playback order. Downloads are cleared when you leave this torrent, unless you save them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -390,6 +420,46 @@ private fun StreamProgress(stats: StreamStats?) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = muted,
                 )
+            }
+        }
+    }
+}
+
+/** Offered once the whole episode is on the phone; shows progress and the result in place. */
+@Composable
+private fun SaveButton(state: SaveState?, complete: Boolean, otherBusy: Boolean, onSave: () -> Unit) {
+    when (state) {
+        is SaveState.Saving -> Column(Modifier.fillMaxWidth().height(48.dp), verticalArrangement = Arrangement.Center) {
+            LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Saving to ${Saver.location} · ${(state.progress * 100).toInt()}%",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        is SaveState.Saved -> FilledTonalButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Text("Saved to ${Saver.location}")
+        }
+        else -> {
+            FilledTonalButton(
+                onClick = onSave,
+                enabled = complete && !otherBusy,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Icon(painterResource(R.drawable.ic_download), contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                Text(
+                    when {
+                        state is SaveState.Failed -> "Try saving again"
+                        otherBusy -> "Another video is saving…"
+                        complete -> "Save to device"
+                        else -> "Save to device at 100%"
+                    },
+                )
+            }
+            if (state is SaveState.Failed) {
+                Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }

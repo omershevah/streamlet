@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 17: needed to reach a search source on your home network. Asked for only then. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- Only Android 8 and 9 need this to save videos to Movies; newer versions use MediaStore. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!-- Lets the app check whether VLC is installed (Android 11+ package visibility). -->
     <queries>
