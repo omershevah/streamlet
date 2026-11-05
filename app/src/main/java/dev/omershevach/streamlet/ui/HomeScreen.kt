@@ -25,9 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -56,8 +53,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.omershevach.streamlet.R
-import dev.omershevach.streamlet.Saver
-import dev.omershevach.streamlet.Download
 import dev.omershevach.streamlet.SearchState
 import dev.omershevach.streamlet.SourceResults
 import dev.omershevach.streamlet.engine.Magnet
@@ -73,13 +68,10 @@ import kotlinx.coroutines.launch
 internal fun HomeScreen(
     error: String?,
     search: SearchState,
-    downloads: List<Download>,
-    onRemoveDownload: (String) -> Unit,
     onOpen: (String) -> Unit,
     onSearch: (String) -> Unit,
     onClear: () -> Unit,
     onPick: (SearchResult) -> Unit,
-    onSources: () -> Unit,
     onEdit: () -> Unit,
 ) {
     var text by rememberSaveable { mutableStateOf(search.query) }
@@ -95,14 +87,7 @@ internal fun HomeScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Streamlet") },
-                actions = {
-                    IconButton(onClick = onSources) {
-                        Icon(painterResource(R.drawable.ic_tune), contentDescription = "Sources")
-                    }
-                },
-            )
+            CenterAlignedTopAppBar(title = { Text("Streamlet") })
         },
     ) { padding ->
         Column(
@@ -150,13 +135,9 @@ internal fun HomeScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
-            if (downloads.isNotEmpty()) {
-                DownloadsCard(downloads, onRemoveDownload, Modifier.widthIn(max = 640.dp).padding(horizontal = 16.dp))
-            }
-
             when {
                 search.groups.isNotEmpty() -> Results(search.groups, onPick, Modifier.widthIn(max = 640.dp))
-                search.query.isNotEmpty() -> NoSources(onSources) // searched, but every source is off
+                search.query.isNotEmpty() -> NoSources() // searched, but every source is off
                 else -> Welcome()
             }
         }
@@ -167,7 +148,7 @@ internal fun HomeScreen(
 private fun Results(groups: List<SourceResults>, onPick: (SearchResult) -> Unit, modifier: Modifier) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
+        contentPadding = PaddingValues(bottom = 16.dp),
     ) {
         groups.forEach { group ->
             item(key = "h-" + group.source.id) {
@@ -232,61 +213,6 @@ private fun Message(text: String, color: androidx.compose.ui.graphics.Color) {
     )
 }
 
-/** Episodes set to "Save when finished", downloading or saving in the background. */
-@Composable
-private fun DownloadsCard(items: List<Download>, onRemove: (String) -> Unit, modifier: Modifier) {
-    Card(
-        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        shape = MaterialTheme.shapes.large,
-    ) {
-        Text(
-            "Saving when finished",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp),
-        )
-        items.forEach { d ->
-            val status = d.status
-            ListItem(
-                headlineContent = { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                supportingContent = {
-                    Column {
-                        when (status) {
-                            Download.Status.Downloading -> {
-                                LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
-                                Text(
-                                    "${(d.progress * 100).toInt()}% · ${formatSize(d.bytesPerSecond.toLong())}/s",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                            is Download.Status.Saving -> {
-                                LinearProgressIndicator(progress = { status.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
-                                Text("Saving · ${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Download.Status.Saved -> Text("Saved to ${Saver.location}", color = MaterialTheme.colorScheme.primary)
-                            is Download.Status.Failed -> Text(status.message, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                },
-                trailingContent = if (status !is Download.Status.Saving) {
-                    {
-                        IconButton(onClick = { onRemove(d.id) }) {
-                            Icon(
-                                painterResource(R.drawable.ic_close),
-                                contentDescription = if (status == Download.Status.Downloading) "Cancel" else "Clear",
-                            )
-                        }
-                    }
-                } else {
-                    null
-                },
-                colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-            )
-        }
-    }
-}
-
 @Composable
 private fun Welcome() {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -303,7 +229,7 @@ private fun Welcome() {
             Text("Find something to watch", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Search the Internet Archive and your own sources, or paste a magnet link. Pick an episode and it plays in VLC.",
+                "Search the Internet Archive and your own sources, or paste a magnet link. Pick an episode, press Start, and watch it in VLC.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -314,7 +240,7 @@ private fun Welcome() {
 }
 
 @Composable
-private fun NoSources(onSources: () -> Unit) {
+private fun NoSources() {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -323,11 +249,9 @@ private fun NoSources(onSources: () -> Unit) {
         Text("All sources are switched off", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Turn one on to search. Magnet links still work.",
+            "Turn one on in the Sources tab. Magnet links still work.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = onSources) { Text("Sources") }
     }
 }

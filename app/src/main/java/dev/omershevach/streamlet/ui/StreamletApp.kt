@@ -9,10 +9,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,35 +23,31 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -59,59 +56,49 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.omershevach.streamlet.Background
 import dev.omershevach.streamlet.MainViewModel
 import dev.omershevach.streamlet.R
-import dev.omershevach.streamlet.Background
-import dev.omershevach.streamlet.Download
-import dev.omershevach.streamlet.Downloads
 import dev.omershevach.streamlet.Saver
 import dev.omershevach.streamlet.Screen
-import dev.omershevach.streamlet.Vlc
+import dev.omershevach.streamlet.Tab as AppTab
+import dev.omershevach.streamlet.Tasks
 import dev.omershevach.streamlet.engine.Episode
 import dev.omershevach.streamlet.engine.Season
-import dev.omershevach.streamlet.engine.StreamStats
 import dev.omershevach.streamlet.engine.formatSize
 import dev.omershevach.streamlet.search.Source
-import kotlinx.coroutines.launch
 import java.util.Locale
 
 @Composable
 fun StreamletApp(vm: MainViewModel) {
     val screen by vm.screen.collectAsStateWithLifecycle()
-    val stats by vm.stats.collectAsStateWithLifecycle()
     val search by vm.search.collectAsStateWithLifecycle()
     val sources by vm.sources.collectAsStateWithLifecycle()
+    val tasks by Tasks.items.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // The notification is how you stop a stream while VLC is in front, so ask for it on first use.
+    // Tasks run in the background; their notification is how you see and stop them.
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     fun askNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -133,35 +120,26 @@ fun StreamletApp(vm: MainViewModel) {
         urls.any(Source::isLocal) &&
         ContextCompat.checkSelfPermission(context, LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
 
-    val downloads by Downloads.items.collectAsStateWithLifecycle()
-
-    // Ticking "Save when finished": on Android 8 and 9 saving to Movies needs the storage
-    // permission, and the first time, ask Android to let the app run in the background
-    // without battery limits so long downloads aren't cut off.
-    var pendingSaveId by remember { mutableStateOf<String?>(null) }
+    // Saving to Movies on Android 8 and 9 needs the storage permission; ask, then carry on.
+    var afterStorage by remember { mutableStateOf<(() -> Unit)?>(null) }
     val storage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        pendingSaveId?.let { if (granted) vm.setSaveWhenFinished(true, it) }
-        pendingSaveId = null
+        if (granted) afterStorage?.invoke()
+        afterStorage = null
     }
-    fun saveWhenFinished(enabled: Boolean, id: String) {
-        if (!enabled) {
-            vm.setSaveWhenFinished(false, id)
-            return
-        }
-        askNotifications()
-        Background.askOnce(context)
+    fun withSavePermission(then: () -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            pendingSaveId = id
+            afterStorage = then
             storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
-            vm.setSaveWhenFinished(true, id)
+            then()
         }
     }
 
-    BackHandler(enabled = screen !is Screen.Home) { vm.back() }
+    // Back closes the app only from the Search tab.
+    BackHandler(enabled = (screen as? Screen.Main)?.tab != AppTab.Search) { vm.back() }
 
     AnimatedContent(
         targetState = screen,
@@ -170,49 +148,98 @@ fun StreamletApp(vm: MainViewModel) {
         label = "screen",
     ) { s ->
         when (s) {
-            is Screen.Home -> HomeScreen(
-                error = s.error,
-                search = search,
-                downloads = downloads,
-                onRemoveDownload = vm::removeDownload,
-                onOpen = { askNotifications(); vm.open(it) },
-                onSearch = { query ->
-                    if (needsLocalNetwork(sources.filter { it.enabled }.map { it.url })) {
-                        pendingQuery = query
-                        localNetwork.launch(LOCAL_NETWORK)
-                    } else {
-                        vm.search(query)
-                    }
-                },
-                onClear = vm::clearSearch,
-                onPick = { askNotifications(); vm.openResult(it) },
-                onSources = vm::showSources,
-                onEdit = vm::clearError,
-            )
-            is Screen.Sources -> SourcesScreen(
-                sources = sources,
-                onBack = vm::back,
-                onToggle = vm::setEnabled,
-                onSave = { source ->
-                    vm.saveSource(source)
-                    if (needsLocalNetwork(listOf(source.url))) localNetwork.launch(LOCAL_NETWORK)
-                },
-                onDelete = vm::deleteSource,
-            )
+            is Screen.Main -> MainTabs(s.tab, taskCount = tasks.size, onSelect = vm::selectTab) { tab ->
+                when (tab) {
+                    AppTab.Search -> HomeScreen(
+                        error = s.error,
+                        search = search,
+                        onOpen = { askNotifications(); vm.open(it) },
+                        onSearch = { query ->
+                            if (needsLocalNetwork(sources.filter { it.enabled }.map { it.url })) {
+                                pendingQuery = query
+                                localNetwork.launch(LOCAL_NETWORK)
+                            } else {
+                                vm.search(query)
+                            }
+                        },
+                        onClear = vm::clearSearch,
+                        onPick = { askNotifications(); vm.openResult(it) },
+                        onEdit = vm::clearError,
+                    )
+                    AppTab.Tasks -> TasksScreen(tasks, onOpen = vm::openTask, onRemove = vm::removeTask)
+                    AppTab.Sources -> SourcesScreen(
+                        sources = sources,
+                        onToggle = vm::setEnabled,
+                        onSave = { source ->
+                            vm.saveSource(source)
+                            if (needsLocalNetwork(listOf(source.url))) localNetwork.launch(LOCAL_NETWORK)
+                        },
+                        onDelete = vm::deleteSource,
+                    )
+                }
+            }
             is Screen.Resolving -> ResolvingScreen(s.name, onCancel = vm::back)
-            is Screen.Picker -> PickerScreen(s.title, s.seasons, onBack = vm::back, onPick = vm::play)
-            is Screen.Playing -> PlayingScreen(
-                s, stats,
-                download = downloads.firstOrNull { it.id == s.file },
+            is Screen.Picker -> PickerScreen(
+                s,
                 onBack = vm::back,
-                onNext = vm::play,
-                onSaveWhenFinished = { saveWhenFinished(it, s.file) },
+                onPick = vm::askStart,
+                onDismissStart = vm::dismissStart,
+                onStart = { episode, save ->
+                    Background.askOnce(context) // tasks keep running with the app closed
+                    if (save) withSavePermission { vm.start(episode, true) } else vm.start(episode, false)
+                },
+            )
+            is Screen.TaskDetail -> TaskDetailScreen(
+                task = tasks.firstOrNull { it.id == s.id },
+                onBack = vm::back,
+                onNext = vm::startNext,
+                onRemove = vm::removeTask,
+                onSaveWhenFinished = { id, enabled ->
+                    if (enabled) withSavePermission { vm.setSaveWhenFinished(id, true) } else vm.setSaveWhenFinished(id, false)
+                },
             )
         }
     }
 }
 
 private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+
+/** The bottom bar and the selected tab's screen above it. */
+@Composable
+private fun MainTabs(tab: AppTab, taskCount: Int, onSelect: (AppTab) -> Unit, content: @Composable (AppTab) -> Unit) {
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = tab == AppTab.Search,
+                    onClick = { onSelect(AppTab.Search) },
+                    icon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
+                    label = { Text("Search") },
+                )
+                NavigationBarItem(
+                    selected = tab == AppTab.Tasks,
+                    onClick = { onSelect(AppTab.Tasks) },
+                    icon = {
+                        BadgedBox(badge = { if (taskCount > 0) Badge { Text("$taskCount") } }) {
+                            Icon(painterResource(R.drawable.ic_download), contentDescription = null)
+                        }
+                    },
+                    label = { Text("Tasks") },
+                )
+                NavigationBarItem(
+                    selected = tab == AppTab.Sources,
+                    onClick = { onSelect(AppTab.Sources) },
+                    icon = { Icon(painterResource(R.drawable.ic_tune), contentDescription = null) },
+                    label = { Text("Sources") },
+                )
+            }
+        },
+    ) { padding ->
+        Box(Modifier.padding(bottom = padding.calculateBottomPadding()).consumeWindowInsets(padding)) {
+            Crossfade(targetState = tab, animationSpec = tween(150), label = "tab") { content(it) }
+        }
+    }
+}
 
 @Composable
 private fun ResolvingScreen(name: String?, onCancel: () -> Unit) {
@@ -244,26 +271,32 @@ private fun ResolvingScreen(name: String?, onCancel: () -> Unit) {
 }
 
 @Composable
-private fun PickerScreen(title: String, seasons: List<Season>, onBack: () -> Unit, onPick: (Episode) -> Unit) {
+private fun PickerScreen(
+    s: Screen.Picker,
+    onBack: () -> Unit,
+    onPick: (Episode) -> Unit,
+    onDismissStart: () -> Unit,
+    onStart: (Episode, Boolean) -> Unit,
+) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
-    val season = seasons[tab.coerceIn(seasons.indices)]
+    val season = s.seasons[tab.coerceIn(s.seasons.indices)]
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             TopAppBar(
-                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { BackButton(onBack) },
                 scrollBehavior = scroll,
             )
         },
     ) { padding ->
         Column(Modifier.padding(top = padding.calculateTopPadding())) {
-            if (seasons.size > 1) {
+            if (s.seasons.size > 1) {
                 PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 16.dp) {
-                    seasons.forEachIndexed { i, s ->
-                        Tab(selected = i == tab, onClick = { tab = i }, text = { Text(s.label) })
+                    s.seasons.forEachIndexed { i, season ->
+                        Tab(selected = i == tab, onClick = { tab = i }, text = { Text(season.label) })
                     }
                 }
             }
@@ -277,6 +310,8 @@ private fun PickerScreen(title: String, seasons: List<Season>, onBack: () -> Uni
             }
         }
     }
+
+    s.confirm?.let { StartSheet(s.title, it, onDismiss = onDismissStart, onStart = onStart) }
 }
 
 @Composable
@@ -295,203 +330,68 @@ private fun EpisodeRow(ep: Episode, onClick: () -> Unit) {
             }
         },
         headlineContent = { Text(ep.headline, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        supportingContent = {
-            val type = ep.fileName.substringAfterLast('.', "").uppercase()
-            Text(listOf(ep.code, type, formatSize(ep.size)).filter { it.isNotEmpty() }.joinToString(" · "))
-        },
-        trailingContent = {
-            Icon(painterResource(R.drawable.ic_play), contentDescription = "Play", Modifier.size(20.dp))
-        },
+        supportingContent = { Text(details(ep)) },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
 
+internal fun details(ep: Episode): String {
+    val type = ep.fileName.substringAfterLast('.', "").uppercase()
+    return listOf(ep.code, type, formatSize(ep.size)).filter { it.isNotEmpty() }.joinToString(" · ")
+}
+
+/** Asks before downloading anything: what it is, whether to save it when done, and Start. */
 @Composable
-private fun PlayingScreen(
-    s: Screen.Playing,
-    stats: StreamStats?,
-    download: Download?,
-    onBack: () -> Unit,
-    onNext: (Episode) -> Unit,
-    onSaveWhenFinished: (Boolean) -> Unit,
-) {
-    val context = LocalContext.current
-    var vlcInstalled by remember { mutableStateOf(Vlc.isInstalled(context)) }
-    LifecycleResumeEffect(Unit) {
-        vlcInstalled = Vlc.isInstalled(context)
-        onPauseOrDispose { }
-    }
-
-    // Hand off to VLC by itself as soon as the start of the file is in.
-    val ready = stats?.ready == true
-    var handedOff by rememberSaveable(s.url) { mutableStateOf(false) }
-    LaunchedEffect(ready, vlcInstalled, s.url) {
-        if (ready && vlcInstalled && !handedOff) {
-            handedOff = true
-            Vlc.play(context, s.url, s.episode.headline)
-        }
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = { BackButton(onBack) },
+private fun StartSheet(torrentTitle: String, episode: Episode, onDismiss: () -> Unit, onStart: (Episode, Boolean) -> Unit) {
+    var save by rememberSaveable(episode.fileIndex) { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp)) {
+            Text(
+                torrentTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-        },
-    ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(24.dp)) {
-                    if (s.episode.code.isNotEmpty()) {
-                        Text(
-                            s.episode.code,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                    }
-                    Text(s.episode.headline, style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.height(20.dp))
-                    StreamProgress(stats)
-                }
-            }
-
             Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = { if (vlcInstalled) Vlc.play(context, s.url, s.episode.headline) else Vlc.install(context) },
-                enabled = !vlcInstalled || ready,
-                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+            Text(episode.headline, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(details(episode), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .toggleable(value = save, role = Role.Checkbox, onValueChange = { save = it })
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(painterResource(R.drawable.ic_play), contentDescription = null, Modifier.size(20.dp))
-                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(if (vlcInstalled) "Watch in VLC" else "Install VLC")
-            }
-            s.next?.let { next ->
-                FilledTonalButton(onClick = { onNext(next) }, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                Checkbox(checked = save, onCheckedChange = null)
+                Spacer(Modifier.size(8.dp))
+                Column {
+                    Text("Save when finished", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Next: " + listOf(next.code, next.headline).filter { it.isNotEmpty() }.distinct()
-                            .joinToString(" · "),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        "Copies it to ${Saver.location} at 100%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            SaveWhenFinished(download, onSaveWhenFinished)
-            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                Icon(painterResource(R.drawable.ic_stop), contentDescription = null, Modifier.size(18.dp))
-                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text("Stop")
-            }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Only this episode is downloaded, in playback order. Downloads are cleared when you leave this torrent, unless they're set to save.",
+                "It downloads in playback order, so you can watch in VLC while it does, and keeps going in the background until you remove it from Tasks.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             )
-        }
-    }
-}
-
-@Composable
-private fun StreamProgress(stats: StreamStats?) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    when {
-        stats == null || (!stats.ready && stats.startup == 0f && stats.bytesPerSecond == 0) -> {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (stats == null) "Connecting…" else "Connecting · ${peers(stats.peers)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = muted,
-            )
-        }
-        !stats.ready -> {
-            LinearProgressIndicator(progress = { stats.startup }, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Buffering · ${rate(stats.bytesPerSecond)} · ${peers(stats.peers)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = muted,
-            )
-        }
-        else -> {
-            LinearProgressIndicator(progress = { stats.downloaded }, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    "${(stats.downloaded * 100).toInt()}% · ${formatSize(stats.bufferedAhead)} ahead",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = muted,
-                )
-                Text(
-                    "${rate(stats.bytesPerSecond)} · ${peers(stats.peers)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = muted,
-                )
+            Spacer(Modifier.height(24.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(onClick = { onStart(episode, save) }, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+                    Icon(painterResource(R.drawable.ic_download), contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text("Start")
+                }
             }
-        }
-    }
-}
-
-/**
- * "Save when finished": once ticked, the episode keeps downloading even after you leave it or
- * close the app, and is copied to Movies/Streamlet at 100%. Shows how that's going underneath.
- */
-@Composable
-private fun SaveWhenFinished(download: Download?, onChange: (Boolean) -> Unit) {
-    val status = download?.status
-    val checked = download != null && status !is Download.Status.Failed
-    // Once the copy has started there's nothing left to cancel.
-    val locked = status is Download.Status.Saving || status == Download.Status.Saved
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(MaterialTheme.shapes.medium)
-                .toggleable(value = checked, enabled = !locked, role = Role.Checkbox, onValueChange = onChange)
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(checked = checked, onCheckedChange = null, enabled = !locked)
-            Spacer(Modifier.size(8.dp))
-            Text("Save when finished", style = MaterialTheme.typography.bodyLarge)
-        }
-        val muted = MaterialTheme.colorScheme.onSurfaceVariant
-        when (status) {
-            null -> Text(
-                "Copies it to ${Saver.location} at 100%. It keeps downloading if you leave or close the app.",
-                style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(start = 48.dp),
-            )
-            Download.Status.Downloading -> Text(
-                "Will save to ${Saver.location} at 100%. Keeps downloading in the background.",
-                style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(start = 48.dp),
-            )
-            is Download.Status.Saving -> Column(Modifier.padding(start = 48.dp)) {
-                LinearProgressIndicator(progress = { status.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
-                Text("Saving to ${Saver.location} · ${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, color = muted)
-            }
-            Download.Status.Saved -> Text(
-                "Saved to ${Saver.location}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 48.dp),
-            )
-            is Download.Status.Failed -> Text(
-                "Couldn't save: ${status.message}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 48.dp),
-            )
         }
     }
 }
@@ -502,7 +402,3 @@ internal fun BackButton(onClick: () -> Unit) {
         Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
     }
 }
-
-private fun rate(bytesPerSecond: Int) = formatSize(bytesPerSecond.toLong()) + "/s"
-
-private fun peers(n: Int) = if (n == 1) "1 peer" else "$n peers"

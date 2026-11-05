@@ -20,7 +20,7 @@ import java.io.OutputStream
 
 /**
  * Copies a fully downloaded video into the shared Movies/Streamlet folder, where gallery
- * and player apps can see it. Called by [Downloads], one copy at a time.
+ * and player apps can see it. Called by [Tasks], one copy at a time.
  */
 object Saver {
     private const val FOLDER = "Streamlet"

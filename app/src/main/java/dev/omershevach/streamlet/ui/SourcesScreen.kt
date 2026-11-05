@@ -31,7 +31,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,7 +50,6 @@ import dev.omershevach.streamlet.search.SourceType
 @Composable
 internal fun SourcesScreen(
     sources: List<Source>,
-    onBack: () -> Unit,
     onToggle: (Source, Boolean) -> Unit,
     onSave: (Source) -> Unit,
     onDelete: (Source) -> Unit,
@@ -60,7 +59,7 @@ internal fun SourcesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Sources") }, navigationIcon = { BackButton(onBack) })
+            CenterAlignedTopAppBar(title = { Text("Sources") })
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(

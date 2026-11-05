@@ -13,109 +13,110 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import dev.omershevach.streamlet.engine.TorrentEngine
+import dev.omershevach.streamlet.engine.formatSize
 
 /**
- * Keeps the app process (and so the torrent, the local server and any background download)
- * alive while VLC is in front or the app is closed. Runs while a stream is open or an episode
- * marked "Save when finished" is still downloading or saving, with one notification for both.
+ * Keeps the app process (and so the torrents, the local server VLC reads from, and any save
+ * in progress) alive while there are tasks, whether the app is open or not. One notification
+ * sums them up, with a Stop all action.
  */
 class StreamService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            TorrentEngine.stopStream()
-            streamTitle = null
-            if (!Downloads.active) {
-                stopSelf()
-                return START_NOT_STICKY
-            }
+        if (intent?.action == ACTION_STOP_ALL) Tasks.removeAll(this)
+        if (Tasks.isEmpty) {
+            stopSelf()
+            return START_NOT_STICKY
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Streaming", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL, "Tasks", NotificationManager.IMPORTANCE_LOW),
             )
         }
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, build(this),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
         )
+        running = true
         return START_NOT_STICKY
     }
 
-    // Android 15 limits data-sync services to 6 hours a day.
+    override fun onDestroy() {
+        running = false
+        super.onDestroy()
+    }
+
+    // Android 15+ limits data-sync services to about 6 hours a day. Tasks stay listed and pick
+    // up again (the service restarts) the next time the app is opened.
     override fun onTimeout(startId: Int, fgsType: Int) {
-        TorrentEngine.stopStream()
-        streamTitle = null
         stopSelf()
     }
 
     companion object {
         const val CHANNEL = "streaming"
         private const val NOTIFICATION_ID = 1
-        private const val ACTION_STOP = "stop"
+        private const val ACTION_STOP_ALL = "stop_all"
 
-        /** What's streaming, or null. Set from the main thread, read when building the notification. */
-        @Volatile private var streamTitle: String? = null
+        @Volatile private var running = false
 
-        fun start(context: Context, title: String) {
-            streamTitle = title
-            ContextCompat.startForegroundService(context, Intent(context, StreamService::class.java))
-        }
-
-        /** The stream ended. The service keeps running if a save is still going. */
-        fun stop(context: Context) {
-            streamTitle = null
-            refresh(context)
-        }
-
-        /** Updates the notification, or stops the service when there's nothing left to do. */
-        fun refresh(context: Context) {
-            if (streamTitle == null && !Downloads.active) {
-                context.stopService(Intent(context, StreamService::class.java))
-            } else {
-                context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(context))
+        /** Starts, refreshes or stops the service to match the task list. */
+        fun update(context: Context) {
+            if (Tasks.isEmpty) {
+                if (running) context.stopService(Intent(context, StreamService::class.java))
+                return
             }
+            if (!running) {
+                try {
+                    ContextCompat.startForegroundService(context, Intent(context, StreamService::class.java))
+                } catch (_: Exception) {
+                    // Not allowed from the background (after a system timeout); retried when the app opens.
+                }
+                return
+            }
+            context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(context))
         }
 
         private fun build(context: Context): Notification {
-            val stream = streamTitle
-            val active = Downloads.items.value.filter { it.active }
+            val tasks = Tasks.items.value
             val openApp = PendingIntent.getActivity(
                 context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_IMMUTABLE,
             )
+            val stopAll = PendingIntent.getService(
+                context, 1,
+                Intent(context, StreamService::class.java).setAction(ACTION_STOP_ALL),
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+            val saving = tasks.firstNotNullOfOrNull { it.save as? Task.Save.Saving }
+            val downloading = tasks.filter { !it.complete }
+            val rate = tasks.sumOf { it.stats?.bytesPerSecond ?: 0 }
+            val one = tasks.singleOrNull()
+            val title = when {
+                saving != null -> "Saving to ${Saver.location}"
+                one != null -> one.episode.headline
+                else -> "${tasks.size} tasks"
+            }
+            val text = when {
+                downloading.isEmpty() -> if (one != null) "Downloaded" else "All downloaded"
+                one != null -> "${((one.stats?.downloaded ?: 0f) * 100).toInt()}% · ${formatSize(rate.toLong())}/s"
+                else -> "${downloading.size} downloading · ${formatSize(rate.toLong())}/s"
+            }
             val builder = NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(if (stream != null) R.drawable.ic_play else R.drawable.ic_download)
+                .setSmallIcon(if (downloading.isEmpty() && saving == null) R.drawable.ic_play else R.drawable.ic_download)
+                .setContentTitle(title)
+                .setContentText(text)
                 .setContentIntent(openApp)
+                .addAction(R.drawable.ic_stop, "Stop all", stopAll)
                 .setOngoing(true)
                 .setSilent(true)
                 .setOnlyAlertOnce(true)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            if (stream != null) {
-                val stop = PendingIntent.getService(
-                    context, 1,
-                    Intent(context, StreamService::class.java).setAction(ACTION_STOP),
-                    PendingIntent.FLAG_IMMUTABLE,
-                )
-                builder.setContentTitle("Streaming").setContentText(stream).addAction(R.drawable.ic_stop, "Stop", stop)
-                if (active.isNotEmpty()) builder.setSubText("${active.size} to save")
-            } else if (active.isNotEmpty()) {
-                val one = active.singleOrNull()
-                val saving = one?.status as? Download.Status.Saving
-                val percent = ((saving?.progress ?: (active.sumOf { it.downloaded }.toFloat() / active.sumOf { it.size }.coerceAtLeast(1))) * 100).toInt()
-                builder.setContentTitle(
-                    when {
-                        saving != null -> "Saving to ${Saver.location}"
-                        one != null -> "Downloading to save"
-                        else -> "Downloading ${active.size} videos to save"
-                    },
-                )
-                    .setContentText(one?.name ?: active.joinToString { it.name })
-                    .setProgress(100, percent, false)
+            when {
+                saving != null -> builder.setProgress(100, (saving.progress * 100).toInt(), false)
+                one != null && !one.complete -> builder.setProgress(100, ((one.stats?.downloaded ?: 0f) * 100).toInt(), false)
             }
             return builder.build()
         }

@@ -1,6 +1,6 @@
 # Streamlet
 
-Search, or paste (or tap, or share) a magnet link for an episode, a season or a whole series. Pick a season and an episode, and it plays in VLC while it downloads. Only the chosen episode is downloaded, in playback order, and downloads are cleared when you leave the torrent.
+Search, or paste (or tap, or share) a magnet link for an episode, a season or a whole series. Pick an episode, press Start, and it downloads as a task in playback order, so you can watch it in VLC while it downloads. Only the chosen episode is downloaded, in playback order, and downloads are cleared when you leave the torrent.
 
 ## Build
 
@@ -8,15 +8,17 @@ Search, or paste (or tap, or share) a magnet link for an episode, a season or a 
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
 3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
 
-## Save when finished and background downloads
+## Tasks
 
-Tick **Save when finished** on the playing screen at any point. The episode then keeps downloading until it's complete, even if you go back, open something else, or close the app, and is copied to `Movies/Streamlet` (visible to the gallery and other players) as soon as it reaches 100%. A notification shows progress and opens the saved video when it's done; the home screen lists everything that's downloading or saved, with a button to cancel.
+The app has three tabs: **Search**, **Tasks** and **Sources**.
 
-- A foreground service with a notification keeps the app alive while a stream is open or anything is still downloading or saving.
-- The first time you tick the box, Android asks whether Streamlet may run in the background without battery limits. Allowing it keeps long downloads from being paused. You can change it later in the app's battery settings.
-- Several episodes can download at once, including from different torrents. Each torrent's temporary files are deleted once nothing is streaming or downloading from it.
-- Android 8 and 9 ask for storage permission the first time; newer versions don't need any.
-- Android 15 and newer allow this kind of background service about 6 hours a day.
+- Opening a link or a search result loads the torrent and lists its episodes. Nothing downloads yet: tapping an episode shows what it is, with a **Save when finished** option and a **Start** button. A single-video torrent goes straight to that question.
+- **Start** adds the episode to **Tasks**. Each task downloads only that file, in playback order, and keeps going in the background, with the app closed too, until you remove it. Several tasks can run at once, from different torrents.
+- Each task has a play button (Watch in VLC) once the start of the file is in. Tapping a task opens its details: progress, Watch in VLC, **Start next** episode, Save when finished, and **Remove task**.
+- **Save when finished** copies the file to `Movies/Streamlet` as soon as it's complete, where the gallery and other players see it. It can be switched on or off on a task at any time before then; a notification opens the saved video.
+- Removing a task deletes its download (a saved copy stays). A torrent's temporary files go once it has no tasks left.
+- A foreground service with one notification (with **Stop all**) keeps the app alive while there are tasks. The first Start asks Android to let the app run in the background without battery limits, so long downloads aren't paused. On Android 15 and newer, this kind of service is allowed about 6 hours a day; after that, tasks pause until you open the app again.
+- Android 8 and 9 ask for storage permission the first time you save; newer versions don't need any.
 
 ## Search and sources
 
@@ -65,15 +67,15 @@ magnet link
 
 | File | What it does |
 |---|---|
-| `engine/TorrentEngine.kt` | libtorrent session, resolve, play, stats |
+| `engine/TorrentEngine.kt` | libtorrent session, resolve, tasks (many at once), stats |
 | `engine/Stream.kt` | Read-head tracking and piece deadlines; blocks reads until pieces arrive |
 | `engine/StreamServer.kt`, `ByteRange.kt` | Minimal HTTP/1.1 server with Range requests |
 | `engine/Episodes.kt`, `Magnet.kt` | Filename parsing, magnet normalization (adds a few public trackers) |
 | `search/Search.kt`, `Source.kt` | Internet Archive, Torznab and JSON search; saved sources; `.torrent` downloads |
-| `Downloads.kt`, `Saver.kt` | Save when finished: background downloads, copy to Movies/Streamlet (MediaStore) |
+| `Tasks.kt`, `Saver.kt` | Tasks: progress, Save when finished, copy to Movies/Streamlet (MediaStore) |
 | `Background.kt` | Asks once to run without battery limits |
-| `MainViewModel.kt` | Screen state: Home (search) → Resolving → Picker → Playing, plus Sources |
-| `ui/` | Compose / Material 3 screens: search, sources, episode picker, playing |
+| `MainViewModel.kt` | Screens: tabs (Search, Tasks, Sources) → Resolving → Picker (Start sheet), Task details |
+| `ui/` | Compose / Material 3 screens: bottom navigation, search, tasks, sources, episode picker |
 
 ## Notes
 
