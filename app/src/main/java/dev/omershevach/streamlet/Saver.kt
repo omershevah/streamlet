@@ -12,89 +12,25 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.concurrent.Executors
-
-sealed interface SaveState {
-    /** The torrent file being saved, to match the state to what's on screen. */
-    val key: String?
-
-    data object Idle : SaveState {
-        override val key: String? = null
-    }
-
-    data class Saving(override val key: String, val name: String, val progress: Float) : SaveState
-    data class Saved(override val key: String, val name: String) : SaveState
-    data class Failed(override val key: String, val name: String, val message: String) : SaveState
-}
 
 /**
  * Copies a fully downloaded video into the shared Movies/Streamlet folder, where gallery
- * and player apps can see it. One copy at a time.
- *
- * The source file is opened before anything else, so the copy finishes even if the torrent
- * (and its cache files) is removed meanwhile: an open file stays readable after deletion.
+ * and player apps can see it. Called by [Downloads], one copy at a time.
  */
 object Saver {
     private const val FOLDER = "Streamlet"
     private const val SAVED_NOTIFICATION_ID = 3
 
-    private val _state = MutableStateFlow<SaveState>(SaveState.Idle)
-    val state = _state.asStateFlow()
-    val busy: Boolean get() = _state.value is SaveState.Saving
-
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "saver").apply { isDaemon = true } }
-
     /** Where saved videos end up, for showing to the user. */
     val location: String get() = "${Environment.DIRECTORY_MOVIES}/$FOLDER"
 
-    fun start(context: Context, file: File, name: String) {
-        if (busy) return
-        val app = context.applicationContext
-        val key = file.absolutePath
-        val input = try {
-            FileInputStream(file)
-        } catch (e: IOException) {
-            _state.value = SaveState.Failed(key, name, "The downloaded file is gone")
-            return
-        }
-        val total = file.length()
-        _state.value = SaveState.Saving(key, name, 0f)
-        StreamService.refresh(app)
-
-        worker.execute {
-            val result = try {
-                val uri = input.use { copy(app, it, name, total) { p -> progress(app, key, name, p) } }
-                notifySaved(app, name, uri)
-                SaveState.Saved(key, name)
-            } catch (e: Exception) {
-                SaveState.Failed(key, name, describe(e))
-            }
-            _state.value = result
-            StreamService.refresh(app)
-        }
-    }
-
-    private var lastPercent = -1
-
-    private fun progress(context: Context, key: String, name: String, p: Float) {
-        val percent = (p * 100).toInt()
-        if (percent == lastPercent) return
-        lastPercent = percent
-        _state.value = SaveState.Saving(key, name, p)
-        StreamService.refresh(context)
-    }
-
     /** Returns a content Uri the saved file can be opened with, if the platform gives one. */
-    private fun copy(context: Context, input: InputStream, name: String, total: Long, onProgress: (Float) -> Unit): Uri? {
-        lastPercent = -1
+    fun copy(context: Context, input: InputStream, name: String, total: Long, onProgress: (Float) -> Unit): Uri? {
         val mime = mimeType(name)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
@@ -164,7 +100,7 @@ object Saver {
             }
     }
 
-    private fun describe(e: Exception): String {
+    fun describe(e: Exception): String {
         val text = e.message.orEmpty()
         return when {
             "ENOSPC" in text || "No space" in text -> "Not enough storage space"
@@ -175,7 +111,7 @@ object Saver {
     }
 
     /** A separate notification that stays after saving; tapping it opens the video. */
-    private fun notifySaved(context: Context, name: String, uri: Uri?) {
+    fun notifySaved(context: Context, name: String, uri: Uri?) {
         val builder = NotificationCompat.Builder(context, StreamService.CHANNEL)
             .setSmallIcon(R.drawable.ic_download)
             .setContentTitle("Saved to $location")
@@ -186,9 +122,10 @@ object Saver {
                 .setDataAndType(uri, mimeType(name))
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             builder.setContentIntent(
-                PendingIntent.getActivity(context, 2, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+                PendingIntent.getActivity(context, name.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
             )
         }
-        context.getSystemService(NotificationManager::class.java).notify(SAVED_NOTIFICATION_ID, builder.build())
+        // One notification per video, so several saved in a row all show.
+        context.getSystemService(NotificationManager::class.java).notify(SAVED_NOTIFICATION_ID + (name.hashCode() and 0xFFFF), builder.build())
     }
 }

@@ -16,9 +16,9 @@ import androidx.core.content.ContextCompat
 import dev.omershevach.streamlet.engine.TorrentEngine
 
 /**
- * Keeps the app process (and so the torrent, the local server and any save in progress) alive
- * while VLC is in the foreground. Runs while a stream is open or a video is being saved, and
- * shows one notification for both.
+ * Keeps the app process (and so the torrent, the local server and any background download)
+ * alive while VLC is in front or the app is closed. Runs while a stream is open or an episode
+ * marked "Save when finished" is still downloading or saving, with one notification for both.
  */
 class StreamService : Service() {
 
@@ -28,7 +28,7 @@ class StreamService : Service() {
         if (intent?.action == ACTION_STOP) {
             TorrentEngine.stopStream()
             streamTitle = null
-            if (!Saver.busy) {
+            if (!Downloads.active) {
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -73,7 +73,7 @@ class StreamService : Service() {
 
         /** Updates the notification, or stops the service when there's nothing left to do. */
         fun refresh(context: Context) {
-            if (streamTitle == null && !Saver.busy) {
+            if (streamTitle == null && !Downloads.active) {
                 context.stopService(Intent(context, StreamService::class.java))
             } else {
                 context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(context))
@@ -82,7 +82,7 @@ class StreamService : Service() {
 
         private fun build(context: Context): Notification {
             val stream = streamTitle
-            val save = Saver.state.value as? SaveState.Saving
+            val active = Downloads.items.value.filter { it.active }
             val openApp = PendingIntent.getActivity(
                 context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -102,11 +102,20 @@ class StreamService : Service() {
                     PendingIntent.FLAG_IMMUTABLE,
                 )
                 builder.setContentTitle("Streaming").setContentText(stream).addAction(R.drawable.ic_stop, "Stop", stop)
-                if (save != null) builder.setSubText("Saving ${(save.progress * 100).toInt()}%")
-            } else if (save != null) {
-                builder.setContentTitle("Saving to ${Saver.location}")
-                    .setContentText(save.name)
-                    .setProgress(100, (save.progress * 100).toInt(), false)
+                if (active.isNotEmpty()) builder.setSubText("${active.size} to save")
+            } else if (active.isNotEmpty()) {
+                val one = active.singleOrNull()
+                val saving = one?.status as? Download.Status.Saving
+                val percent = ((saving?.progress ?: (active.sumOf { it.downloaded }.toFloat() / active.sumOf { it.size }.coerceAtLeast(1))) * 100).toInt()
+                builder.setContentTitle(
+                    when {
+                        saving != null -> "Saving to ${Saver.location}"
+                        one != null -> "Downloading to save"
+                        else -> "Downloading ${active.size} videos to save"
+                    },
+                )
+                    .setContentText(one?.name ?: active.joinToString { it.name })
+                    .setProgress(100, percent, false)
             }
             return builder.build()
         }

@@ -38,7 +38,7 @@ sealed interface Screen {
         val episode: Episode,
         val url: String,
         val next: Episode?,
-        /** The file on disk, to match it with [Saver.state]. */
+        /** The file on disk; the id of its [Download] if it's saved when finished. */
         val file: String,
     ) : Screen
 }
@@ -198,11 +198,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         watchStats()
     }
 
-    /** Copies the episode that's playing to Movies/Streamlet. Only offered once it's fully downloaded. */
-    fun save() {
-        val s = TorrentEngine.stream ?: return
-        Saver.start(getApplication(), s.file, s.name)
+    /** "Save when finished" for the episode that's playing: it keeps downloading after you leave. */
+    fun setSaveWhenFinished(enabled: Boolean, id: String) {
+        if (enabled) {
+            val s = TorrentEngine.stream ?: return
+            val kept = TorrentEngine.keep(s.fileIndex) ?: return
+            Downloads.add(getApplication(), kept)
+        } else {
+            Downloads.remove(getApplication(), id)
+        }
     }
+
+    fun removeDownload(id: String) = Downloads.remove(getApplication(), id)
 
     /** Back navigation: playing → picker → home, and sources → home. */
     fun back() {
@@ -267,8 +274,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        // Keep going if something is still streaming to the player; the notification can stop it.
-        if (TorrentEngine.stream == null) Thread { TorrentEngine.shutdown() }.start()
+        // Keep going if something is streaming or downloading in the background; the
+        // notification shows it, and the app can be reopened to stop it.
+        if (!TorrentEngine.busy) Thread { TorrentEngine.shutdown() }.start()
     }
 
     private companion object {

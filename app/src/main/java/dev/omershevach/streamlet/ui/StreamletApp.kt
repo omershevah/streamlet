@@ -70,6 +70,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -85,7 +89,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omershevach.streamlet.MainViewModel
 import dev.omershevach.streamlet.R
-import dev.omershevach.streamlet.SaveState
+import dev.omershevach.streamlet.Background
+import dev.omershevach.streamlet.Download
+import dev.omershevach.streamlet.Downloads
 import dev.omershevach.streamlet.Saver
 import dev.omershevach.streamlet.Screen
 import dev.omershevach.streamlet.Vlc
@@ -127,10 +133,32 @@ fun StreamletApp(vm: MainViewModel) {
         urls.any(Source::isLocal) &&
         ContextCompat.checkSelfPermission(context, LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
 
-    // Android 8 and 9 only: saving to Movies needs the storage permission.
-    val save by Saver.state.collectAsStateWithLifecycle()
+    val downloads by Downloads.items.collectAsStateWithLifecycle()
+
+    // Ticking "Save when finished": on Android 8 and 9 saving to Movies needs the storage
+    // permission, and the first time, ask Android to let the app run in the background
+    // without battery limits so long downloads aren't cut off.
+    var pendingSaveId by remember { mutableStateOf<String?>(null) }
     val storage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) vm.save()
+        pendingSaveId?.let { if (granted) vm.setSaveWhenFinished(true, it) }
+        pendingSaveId = null
+    }
+    fun saveWhenFinished(enabled: Boolean, id: String) {
+        if (!enabled) {
+            vm.setSaveWhenFinished(false, id)
+            return
+        }
+        askNotifications()
+        Background.askOnce(context)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingSaveId = id
+            storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            vm.setSaveWhenFinished(true, id)
+        }
     }
 
     BackHandler(enabled = screen !is Screen.Home) { vm.back() }
@@ -145,6 +173,8 @@ fun StreamletApp(vm: MainViewModel) {
             is Screen.Home -> HomeScreen(
                 error = s.error,
                 search = search,
+                downloads = downloads,
+                onRemoveDownload = vm::removeDownload,
                 onOpen = { askNotifications(); vm.open(it) },
                 onSearch = { query ->
                     if (needsLocalNetwork(sources.filter { it.enabled }.map { it.url })) {
@@ -172,19 +202,11 @@ fun StreamletApp(vm: MainViewModel) {
             is Screen.Resolving -> ResolvingScreen(s.name, onCancel = vm::back)
             is Screen.Picker -> PickerScreen(s.title, s.seasons, onBack = vm::back, onPick = vm::play)
             is Screen.Playing -> PlayingScreen(
-                s, stats, save,
+                s, stats,
+                download = downloads.firstOrNull { it.id == s.file },
                 onBack = vm::back,
                 onNext = vm::play,
-                onSave = {
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    } else {
-                        vm.save()
-                    }
-                },
+                onSaveWhenFinished = { saveWhenFinished(it, s.file) },
             )
         }
     }
@@ -288,10 +310,10 @@ private fun EpisodeRow(ep: Episode, onClick: () -> Unit) {
 private fun PlayingScreen(
     s: Screen.Playing,
     stats: StreamStats?,
-    save: SaveState,
+    download: Download?,
     onBack: () -> Unit,
     onNext: (Episode) -> Unit,
-    onSave: () -> Unit,
+    onSaveWhenFinished: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     var vlcInstalled by remember { mutableStateOf(Vlc.isInstalled(context)) }
@@ -366,7 +388,7 @@ private fun PlayingScreen(
                     )
                 }
             }
-            SaveButton(save.takeIf { it.key == s.file }, complete = stats?.complete == true, otherBusy = save is SaveState.Saving && save.key != s.file, onSave)
+            SaveWhenFinished(download, onSaveWhenFinished)
             OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(painterResource(R.drawable.ic_stop), contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -374,7 +396,7 @@ private fun PlayingScreen(
             }
             Spacer(Modifier.weight(1f))
             Text(
-                "Only this episode is downloaded, in playback order. Downloads are cleared when you leave this torrent, unless you save them.",
+                "Only this episode is downloaded, in playback order. Downloads are cleared when you leave this torrent, unless they're set to save.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -425,42 +447,51 @@ private fun StreamProgress(stats: StreamStats?) {
     }
 }
 
-/** Offered once the whole episode is on the phone; shows progress and the result in place. */
+/**
+ * "Save when finished": once ticked, the episode keeps downloading even after you leave it or
+ * close the app, and is copied to Movies/Streamlet at 100%. Shows how that's going underneath.
+ */
 @Composable
-private fun SaveButton(state: SaveState?, complete: Boolean, otherBusy: Boolean, onSave: () -> Unit) {
-    when (state) {
-        is SaveState.Saving -> Column(Modifier.fillMaxWidth().height(48.dp), verticalArrangement = Arrangement.Center) {
-            LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Saving to ${Saver.location} · ${(state.progress * 100).toInt()}%",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun SaveWhenFinished(download: Download?, onChange: (Boolean) -> Unit) {
+    val status = download?.status
+    val checked = download != null && status !is Download.Status.Failed
+    // Once the copy has started there's nothing left to cancel.
+    val locked = status is Download.Status.Saving || status == Download.Status.Saved
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .toggleable(value = checked, enabled = !locked, role = Role.Checkbox, onValueChange = onChange)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(checked = checked, onCheckedChange = null, enabled = !locked)
+            Spacer(Modifier.size(8.dp))
+            Text("Save when finished", style = MaterialTheme.typography.bodyLarge)
+        }
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        when (status) {
+            null -> Text(
+                "Copies it to ${Saver.location} at 100%. It keeps downloading if you leave or close the app.",
+                style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(start = 48.dp),
             )
-        }
-        is SaveState.Saved -> FilledTonalButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-            Text("Saved to ${Saver.location}")
-        }
-        else -> {
-            FilledTonalButton(
-                onClick = onSave,
-                enabled = complete && !otherBusy,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) {
-                Icon(painterResource(R.drawable.ic_download), contentDescription = null, Modifier.size(18.dp))
-                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(
-                    when {
-                        state is SaveState.Failed -> "Try saving again"
-                        otherBusy -> "Another video is saving…"
-                        complete -> "Save to device"
-                        else -> "Save to device at 100%"
-                    },
-                )
+            Download.Status.Downloading -> Text(
+                "Will save to ${Saver.location} at 100%. Keeps downloading in the background.",
+                style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(start = 48.dp),
+            )
+            is Download.Status.Saving -> Column(Modifier.padding(start = 48.dp)) {
+                LinearProgressIndicator(progress = { status.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                Text("Saving to ${Saver.location} · ${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, color = muted)
             }
-            if (state is SaveState.Failed) {
-                Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
+            Download.Status.Saved -> Text(
+                "Saved to ${Saver.location}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 48.dp),
+            )
+            is Download.Status.Failed -> Text(
+                "Couldn't save: ${status.message}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 48.dp),
+            )
         }
     }
 }

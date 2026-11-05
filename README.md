@@ -8,9 +8,15 @@ Search, or paste (or tap, or share) a magnet link for an episode, a season or a 
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
 3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
 
-## Saving
+## Save when finished and background downloads
 
-Once an episode is fully downloaded (100%), **Save to device** on the playing screen copies it to `Movies/Streamlet`, where the gallery and other players can see it. The copy carries on in the background (shown in the notification) even if you leave the torrent, and a notification opens the saved video when it's done. Android 8 and 9 ask for storage permission the first time; newer versions don't need any.
+Tick **Save when finished** on the playing screen at any point. The episode then keeps downloading until it's complete, even if you go back, open something else, or close the app, and is copied to `Movies/Streamlet` (visible to the gallery and other players) as soon as it reaches 100%. A notification shows progress and opens the saved video when it's done; the home screen lists everything that's downloading or saved, with a button to cancel.
+
+- A foreground service with a notification keeps the app alive while a stream is open or anything is still downloading or saving.
+- The first time you tick the box, Android asks whether Streamlet may run in the background without battery limits. Allowing it keeps long downloads from being paused. You can change it later in the app's battery settings.
+- Several episodes can download at once, including from different torrents. Each torrent's temporary files are deleted once nothing is streaming or downloading from it.
+- Android 8 and 9 ask for storage permission the first time; newer versions don't need any.
+- Android 15 and newer allow this kind of background service about 6 hours a day.
 
 ## Search and sources
 
@@ -64,7 +70,8 @@ magnet link
 | `engine/StreamServer.kt`, `ByteRange.kt` | Minimal HTTP/1.1 server with Range requests |
 | `engine/Episodes.kt`, `Magnet.kt` | Filename parsing, magnet normalization (adds a few public trackers) |
 | `search/Search.kt`, `Source.kt` | Internet Archive, Torznab and JSON search; saved sources; `.torrent` downloads |
-| `Saver.kt` | Copies a finished download to Movies/Streamlet (MediaStore) |
+| `Downloads.kt`, `Saver.kt` | Save when finished: background downloads, copy to Movies/Streamlet (MediaStore) |
+| `Background.kt` | Asks once to run without battery limits |
 | `MainViewModel.kt` | Screen state: Home (search) → Resolving → Picker → Playing, plus Sources |
 | `ui/` | Compose / Material 3 screens: search, sources, episode picker, playing |
 
