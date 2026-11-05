@@ -19,10 +19,16 @@ internal class StreamServer {
 
     val port: Int get() = socket?.localPort ?: -1
 
+    private companion object {
+        val LOOPBACK: InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+    }
+
     @Synchronized
     fun start() {
         if (socket != null) return
-        val s = ServerSocket(0, 16, InetAddress.getLoopbackAddress())
+        // Bind to 127.0.0.1 explicitly: on Android getLoopbackAddress() is the IPv6 ::1,
+        // and a socket bound there refuses the player's connection to 127.0.0.1.
+        val s = ServerSocket(0, 16, LOOPBACK)
         socket = s
         thread(isDaemon = true, name = "stream-accept") {
             while (!s.isClosed) {
