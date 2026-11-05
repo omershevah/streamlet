@@ -6,6 +6,8 @@ activityCompose = "1.10.1"
 lifecycle = "2.9.2"
 composeBom = "2025.07.00"
 libtorrent4j = "2.1.0-39"
+junit = "4.13.2"
+orgJson = "20250517"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -21,6 +23,8 @@ libtorrent4j = { group = "org.libtorrent4j", name = "libtorrent4j", version.ref 
 libtorrent4j-arm64 = { group = "org.libtorrent4j", name = "libtorrent4j-android-arm64", version.ref = "libtorrent4j" }
 libtorrent4j-arm = { group = "org.libtorrent4j", name = "libtorrent4j-android-arm", version.ref = "libtorrent4j" }
 libtorrent4j-x64 = { group = "org.libtorrent4j", name = "libtorrent4j-android-x86_64", version.ref = "libtorrent4j" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

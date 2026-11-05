@@ -15,7 +15,7 @@ android {
         targetSdk = 37
         // CI passes these from the git tag and run number; local builds use the defaults.
         versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.1"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.3"
     }
 
     // Release key from environment variables (set by CI from repository secrets).
@@ -86,4 +86,7 @@ dependencies {
     implementation(libs.libtorrent4j.arm64)
     implementation(libs.libtorrent4j.arm)
     implementation(libs.libtorrent4j.x64)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.org.json) // Android's org.json is only a stub in JVM tests
 }

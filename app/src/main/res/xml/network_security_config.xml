@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sources you add yourself are often plain http on your home network (Jackett, Prowlarr),
+     so cleartext is allowed. The built-in Internet Archive source uses https. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

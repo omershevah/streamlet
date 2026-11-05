@@ -91,6 +91,7 @@ import dev.omershevach.streamlet.engine.Episode
 import dev.omershevach.streamlet.engine.Season
 import dev.omershevach.streamlet.engine.StreamStats
 import dev.omershevach.streamlet.engine.formatSize
+import dev.omershevach.streamlet.search.Source
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -98,19 +99,31 @@ import java.util.Locale
 fun StreamletApp(vm: MainViewModel) {
     val screen by vm.screen.collectAsStateWithLifecycle()
     val stats by vm.stats.collectAsStateWithLifecycle()
+    val search by vm.search.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // The notification is how you stop a stream while VLC is in front, so ask for it on first use.
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    val open: (String) -> Unit = { link ->
+    fun askNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        vm.open(link)
     }
+
+    // Android 17 asks before an app can reach the local network (a Jackett or Prowlarr at home).
+    // Ask when a source on the local network is about to be used, then carry on with the search.
+    var pendingQuery by remember { mutableStateOf<String?>(null) }
+    val localNetwork = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        pendingQuery?.let(vm::search)
+        pendingQuery = null
+    }
+    fun needsLocalNetwork(urls: List<String>) = Build.VERSION.SDK_INT >= 37 &&
+        urls.any(Source::isLocal) &&
+        ContextCompat.checkSelfPermission(context, LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
 
     BackHandler(enabled = screen !is Screen.Home) { vm.back() }
 
@@ -121,7 +134,33 @@ fun StreamletApp(vm: MainViewModel) {
         label = "screen",
     ) { s ->
         when (s) {
-            is Screen.Home -> HomeScreen(s.error, onOpen = open, onEdit = vm::clearError)
+            is Screen.Home -> HomeScreen(
+                error = s.error,
+                search = search,
+                onOpen = { askNotifications(); vm.open(it) },
+                onSearch = { query ->
+                    if (needsLocalNetwork(sources.filter { it.enabled }.map { it.url })) {
+                        pendingQuery = query
+                        localNetwork.launch(LOCAL_NETWORK)
+                    } else {
+                        vm.search(query)
+                    }
+                },
+                onClear = vm::clearSearch,
+                onPick = { askNotifications(); vm.openResult(it) },
+                onSources = vm::showSources,
+                onEdit = vm::clearError,
+            )
+            is Screen.Sources -> SourcesScreen(
+                sources = sources,
+                onBack = vm::back,
+                onToggle = vm::setEnabled,
+                onSave = { source ->
+                    vm.saveSource(source)
+                    if (needsLocalNetwork(listOf(source.url))) localNetwork.launch(LOCAL_NETWORK)
+                },
+                onDelete = vm::deleteSource,
+            )
             is Screen.Resolving -> ResolvingScreen(s.name, onCancel = vm::back)
             is Screen.Picker -> PickerScreen(s.title, s.seasons, onBack = vm::back, onPick = vm::play)
             is Screen.Playing -> PlayingScreen(s, stats, onBack = vm::back, onNext = vm::play)
@@ -129,86 +168,7 @@ fun StreamletApp(vm: MainViewModel) {
     }
 }
 
-@Composable
-private fun HomeScreen(error: String?, onOpen: (String) -> Unit, onEdit: () -> Unit) {
-    var link by rememberSaveable { mutableStateOf("") }
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
-
-    Scaffold(topBar = { CenterAlignedTopAppBar(title = { Text("Streamlet") }) }) { padding ->
-        Box(
-            Modifier
-                .padding(padding)
-                .imePadding()
-                .fillMaxSize()
-                .padding(horizontal = 24.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                Modifier.widthIn(max = 480.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                    Icon(
-                        painterResource(R.drawable.ic_play),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(20.dp).size(36.dp),
-                    )
-                }
-                Spacer(Modifier.height(24.dp))
-                Text("Stream from a magnet link", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "An episode, a season or a whole series. Pick what to watch and it plays in VLC.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(32.dp))
-                OutlinedTextField(
-                    value = link,
-                    onValueChange = { link = it; onEdit() },
-                    label = { Text("Magnet link") },
-                    placeholder = { Text("magnet:?xt=urn:btih:…", maxLines = 1) },
-                    isError = error != null,
-                    supportingText = if (error != null) {
-                        { Text(error) }
-                    } else {
-                        null
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            scope.launch {
-                                val text = clipboard.getClipEntry()?.clipData?.getItemAt(0)?.text?.toString()
-                                if (!text.isNullOrBlank()) {
-                                    link = text
-                                    onOpen(text)
-                                }
-                            }
-                        }) { Icon(painterResource(R.drawable.ic_paste), contentDescription = "Paste and open") }
-                    },
-                    maxLines = 3,
-                    shape = MaterialTheme.shapes.large,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { if (link.isNotBlank()) onOpen(link) }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = { onOpen(link) },
-                    enabled = link.isNotBlank(),
-                    contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) {
-                    Icon(painterResource(R.drawable.ic_play), contentDescription = null, Modifier.size(20.dp))
-                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text("Open")
-                }
-            }
-        }
-    }
-}
+private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
 
 @Composable
 private fun ResolvingScreen(name: String?, onCancel: () -> Unit) {
@@ -292,7 +252,8 @@ private fun EpisodeRow(ep: Episode, onClick: () -> Unit) {
         },
         headlineContent = { Text(ep.headline, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(listOf(ep.code, formatSize(ep.size)).filter { it.isNotEmpty() }.joinToString(" · "))
+            val type = ep.fileName.substringAfterLast('.', "").uppercase()
+            Text(listOf(ep.code, type, formatSize(ep.size)).filter { it.isNotEmpty() }.joinToString(" · "))
         },
         trailingContent = {
             Icon(painterResource(R.drawable.ic_play), contentDescription = "Play", Modifier.size(20.dp))
@@ -435,7 +396,7 @@ private fun StreamProgress(stats: StreamStats?) {
 }
 
 @Composable
-private fun BackButton(onClick: () -> Unit) {
+internal fun BackButton(onClick: () -> Unit) {
     IconButton(onClick = onClick) {
         Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
     }

@@ -1,12 +1,22 @@
 # Streamlet
 
-Paste (or tap, or share) a magnet link for an episode, a season or a whole series. Pick a season and an episode, and it plays in VLC while it downloads. Only the chosen episode is downloaded, in playback order, and downloads are cleared when you leave the torrent.
+Search, or paste (or tap, or share) a magnet link for an episode, a season or a whole series. Pick a season and an episode, and it plays in VLC while it downloads. Only the chosen episode is downloaded, in playback order, and downloads are cleared when you leave the torrent.
 
 ## Build
 
 1. Open the folder in a current Android Studio (it needs Android Gradle Plugin 9.5 support) and let Gradle sync.
 2. Run on a device. VLC for Android (`org.videolan.vlc`) must be installed; the app offers the Play Store page if it isn't.
 3. Release APKs (`./gradlew assembleRelease`) are minified and split per CPU type, so each one carries only the native library it needs.
+
+## Search and sources
+
+The search field takes either a magnet link (opened straight away) or search words. Searches go to every source that's switched on in **Sources** (the icon at the top right), and results are grouped by source.
+
+- **Internet Archive** is built in. It searches public video items on archive.org (public-domain films, old TV, Creative Commons work) and opens each item's `.torrent`, which also uses archive.org as a web seed, so it starts quickly even with few peers. It can be switched off but not deleted.
+- **Torznab**: the search API served by indexer managers such as Jackett and Prowlarr. Add the API URL and key. Searches ask for the Movies and TV categories.
+- **JSON**: any URL that returns a list of results, either a top-level array or one under `results`, `items`, `data` or `torrents`. Each result needs a `title` (or `name`) and a `magnet`, a `link`/`url` to a `.torrent`, or an `info_hash`. `size` and `seeders` are shown if present. Put `{query}` in the URL where the search words go; otherwise `?q=` is added.
+
+Streamlet ships with no sources other than the Internet Archive and only shows what your sources return. On Android 17, a source on your home network (like `http://192.168.1.10:9117`) needs the *local network* permission, which the app asks for when you save or use one.
 
 ## Releases
 
@@ -49,12 +59,13 @@ magnet link
 | `engine/Stream.kt` | Read-head tracking and piece deadlines; blocks reads until pieces arrive |
 | `engine/StreamServer.kt`, `ByteRange.kt` | Minimal HTTP/1.1 server with Range requests |
 | `engine/Episodes.kt`, `Magnet.kt` | Filename parsing, magnet normalization (adds a few public trackers) |
-| `MainViewModel.kt` | Screen state: Home → Resolving → Picker → Playing |
-| `ui/StreamletApp.kt` | Compose / Material 3 screens |
+| `search/Search.kt`, `Source.kt` | Internet Archive, Torznab and JSON search; saved sources; `.torrent` downloads |
+| `MainViewModel.kt` | Screen state: Home (search) → Resolving → Picker → Playing, plus Sources |
+| `ui/` | Compose / Material 3 screens: search, sources, episode picker, playing |
 
 ## Notes
 
-- Dependencies: Compose Material 3, AndroidX core/activity/lifecycle, and [libtorrent4j](https://github.com/aldenml/libtorrent4j) (libtorrent 2.x). No navigation, DI, networking or image libraries.
+- Dependencies: Compose Material 3, AndroidX core/activity/lifecycle, and [libtorrent4j](https://github.com/aldenml/libtorrent4j) (libtorrent 2.x). No navigation, DI, networking, JSON or image libraries (HTTP, JSON and XML use what Android already has).
 - Material You colors on Android 12+, edge-to-edge, predictive back, themed (monochrome) launcher icon.
 - Uses a `dataSync` foreground service. On Android 15 that's limited to 6 hours a day; the stream stops after that.
 - Only stream content you have the right to watch.

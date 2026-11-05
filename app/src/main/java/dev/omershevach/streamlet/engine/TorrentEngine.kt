@@ -3,6 +3,7 @@ package dev.omershevach.streamlet.engine
 import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -26,7 +27,7 @@ import kotlin.concurrent.withLock
 /**
  * The single torrent session for the app. Holds at most one torrent and one stream at a time.
  *
- * Flow: [resolve] adds the magnet with every file switched off and waits for the file list.
+ * Flow: [resolve] adds a magnet or .torrent with every file switched off and waits for the file list.
  * [play] switches on one file and returns a [Stream]; [url] is where a player can read it.
  * The torrent stays connected between episodes, so the next one starts without finding peers again.
  */
@@ -69,13 +70,24 @@ object TorrentEngine {
     suspend fun resolve(magnet: String): List<TorrentFile> = withContext(Dispatchers.IO) {
         ensureStarted()
         val hash = AddTorrentParams.parseMagnetUri(magnet).infoHashes.best
-        torrent?.let { if (it.hash != hash) release() }
+        load(hash) { dir -> session.download(magnet, dir, TorrentFlags.DEFAULT_DONT_DOWNLOAD) }
+    }
 
+    /** Same as [resolve] for the contents of a .torrent file. The file list is already in it, so this is quick. */
+    suspend fun resolve(torrentFile: ByteArray): List<TorrentFile> = withContext(Dispatchers.IO) {
+        ensureStarted()
+        val info = TorrentInfo(torrentFile)
+        val skipAll = Priority.array(Priority.IGNORE, info.numFiles())
+        load(info.infoHash()) { dir -> session.download(info, dir, null, skipAll, null, TorrentFlags.DEFAULT_DONT_DOWNLOAD) }
+    }
+
+    private suspend fun load(hash: Sha1Hash, add: (File) -> Unit): List<TorrentFile> {
+        torrent?.let { if (it.hash != hash) release() }
         val dir = File(root, hash.toHex())
-        session.download(magnet, dir, TorrentFlags.DEFAULT_DONT_DOWNLOAD)
+        add(dir)
         var loaded: Loaded? = null
         while (loaded == null) {
-            ensureActive()
+            currentCoroutineContext().ensureActive()
             val handle = session.find(hash)
             val info = handle?.torrentFile()
             if (handle != null && info != null) loaded = Loaded(hash, handle, info, dir) else delay(250)
@@ -83,7 +95,7 @@ object TorrentEngine {
         val t = checkNotNull(loaded)
         torrent = t
         val files = t.info.files()
-        List(files.numFiles()) { i -> TorrentFile(i, files.filePath(i).replace('\\', '/'), files.fileSize(i)) }
+        return List(files.numFiles()) { i -> TorrentFile(i, files.filePath(i).replace('\\', '/'), files.fileSize(i)) }
     }
 
     val title: String? get() = torrent?.info?.name()

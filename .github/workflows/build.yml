@@ -61,7 +61,7 @@ jobs:
             VERSION="dev-${GITHUB_SHA::7}"
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
+          ./gradlew testReleaseUnitTest assembleRelease -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
 
           mkdir dist
           for apk in app/build/outputs/apk/release/*.apk; do

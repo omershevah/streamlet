@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 17: needed to reach a search source on your home network. Asked for only then. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
     <!-- Lets the app check whether VLC is installed (Android 11+ package visibility). -->
     <queries>
@@ -17,6 +19,7 @@
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Streamlet"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.Streamlet">
 
